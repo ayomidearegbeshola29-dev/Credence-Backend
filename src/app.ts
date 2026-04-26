@@ -146,6 +146,10 @@ app.use('/api/integrations/keys', createApiKeyRouter())
 // Policy engine – fine-grained org permissions
 app.use('/api/orgs/:orgId/policies', createPolicyRouter())
 
+// Webhook management (secret rotation, etc.)
+const webhookStore = new MemoryWebhookStore()
+app.use('/api/webhooks', createWebhookRouter(webhookStore, auditLogService))
+
 const analyticsThresholdSeconds = Number(process.env.ANALYTICS_STALENESS_SECONDS ?? '300')
 const analyticsService = process.env.DATABASE_URL
   ? new AnalyticsService(pool, analyticsThresholdSeconds)
