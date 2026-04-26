@@ -20,6 +20,9 @@ import {
 } from './schemas/index.js'
 import { compressionMiddleware, compressionMetricsMiddleware } from './middleware/compression.js'
 import { metricsMiddleware, register } from './middleware/metrics.js'
+import { createWebhookRouter } from './routes/webhooks.js'
+import { MemoryWebhookStore } from './services/webhooks/memoryStore.js'
+import { auditLogService } from './services/audit/index.js'
 
 const app = express()
 
@@ -103,6 +106,10 @@ app.use('/api/bulk', bulkRouter)
 
 // Admin API
 app.use('/api/admin', createAdminRouter())
+
+// Webhook management (secret rotation, etc.)
+const webhookStore = new MemoryWebhookStore()
+app.use('/api/webhooks', createWebhookRouter(webhookStore, auditLogService))
 
 const analyticsThresholdSeconds = Number(process.env.ANALYTICS_STALENESS_SECONDS ?? '300')
 const analyticsService = process.env.DATABASE_URL
