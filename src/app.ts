@@ -28,12 +28,9 @@ import {
 } from './schemas/index.js'
 import { compressionMiddleware, compressionMetricsMiddleware } from './middleware/compression.js'
 import { metricsMiddleware, register } from './middleware/metrics.js'
-import { createWebhookAdminRouter } from './routes/admin/webhooks.js'
-import { errorHandler } from './middleware/errorHandler.js'
 
 const app = express()
 
-// Load config safely; fall back to defaults if env is incomplete (e.g. in tests)
 let rateLimitConfig: { enabled: boolean; windowSec: number; maxFree: number; maxPro: number; maxEnterprise: number; failOpen: boolean }
 try {
   rateLimitConfig = validateConfig(process.env).rateLimit
@@ -50,36 +47,27 @@ try {
 
 const rateLimitMiddleware = createRateLimitMiddleware(rateLimitConfig)
 
-// Request context and correlation IDs
 app.use(requestIdMiddleware)
 
-// Metrics endpoint for Prometheus
 app.get('/metrics', async (_req, res) => {
   res.set('Content-Type', register.contentType)
   res.end(await register.metrics())
 })
 
 app.use(metricsMiddleware)
-app.use(latencyMetricsMiddleware)
 app.use(compressionMetricsMiddleware)
 app.use(compressionMiddleware)
 app.use(express.json())
 
-// JWT public key set — unauthenticated, per RFC 8414 / OIDC Discovery conventions
 app.use('/.well-known/jwks.json', createJwksRouter())
 
-// Health – full readiness check with per-dependency status
 const healthProbes = createDefaultProbes()
 app.use('/api/health', createHealthRouter(healthProbes))
 
-// Apply tenant-level rate limiting to all API routes below this line.
-// Excluded above: metrics, JWKS, health (unauthenticated / infra endpoints).
 app.use('/api', rateLimitMiddleware)
 
-// Trust score
 app.use('/api/trust', trustRouter)
 
-// Bond status (stub – to be wired to Horizon in a future milestone)
 app.get(
   '/api/bond/:address',
   validate({ params: bondPathParamsSchema }),
@@ -95,7 +83,6 @@ app.get(
   },
 )
 
-// Attestations – list
 app.get(
   '/api/attestations/:address',
   validate({ params: attestationsPathParamsSchema }),
@@ -115,7 +102,6 @@ app.get(
   },
 )
 
-// Attestations – create
 app.post(
   '/api/attestations',
   validate({ body: createAttestationBodySchema }),
@@ -129,26 +115,14 @@ app.post(
   },
 )
 
-// Bulk verification (enterprise)
 app.use('/api/bulk', bulkRouter)
 
-// Import preview (enterprise)
 app.use('/api/imports', importsRouter)
 
-// Admin API
 app.use('/api/admin', createAdminRouter())
 app.use('/api/admin/webhooks', createWebhookAdminRouter())
-app.use('/api/admin/members', createMembersRouter())
 
-// Integration API key management (create, list, rotate, revoke)
-app.use('/api/integrations/keys', createApiKeyRouter())
-
-// Policy engine – fine-grained org permissions
 app.use('/api/orgs/:orgId/policies', createPolicyRouter())
-
-// Webhook management (secret rotation, etc.)
-const webhookStore = new MemoryWebhookStore()
-app.use('/api/webhooks', createWebhookRouter(webhookStore, auditLogService))
 
 const analyticsThresholdSeconds = Number(process.env.ANALYTICS_STALENESS_SECONDS ?? '300')
 const analyticsService = process.env.DATABASE_URL
@@ -156,10 +130,8 @@ const analyticsService = process.env.DATABASE_URL
   : undefined
 app.use('/api/analytics', createAnalyticsRouter(analyticsService))
 
-// Payouts
 app.use('/api/payouts', createPayoutsRouter())
 
-// Final error handler
 app.use(errorHandler)
 
 export default app
