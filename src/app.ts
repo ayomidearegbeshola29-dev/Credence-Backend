@@ -11,6 +11,8 @@ import { createPolicyRouter } from './routes/policy.js'
 import { createAnalyticsRouter } from './routes/analytics.js'
 import { createPayoutsRouter } from './routes/payouts.js'
 import { AnalyticsService } from './services/analytics/service.js'
+import { BondService, BondStore } from './services/bond/index.js'
+import { createBondRouter } from './routes/bond.js'
 import { pool } from './db/pool.js'
 import { validate } from './middleware/validate.js'
 import { requestIdMiddleware } from './middleware/requestId.js'
@@ -22,7 +24,6 @@ import {
   parsePaginationParams,
 } from './lib/pagination.js'
 import {
-  bondPathParamsSchema,
   attestationsPathParamsSchema,
   createAttestationBodySchema,
 } from './schemas/index.js'
@@ -68,20 +69,8 @@ app.use('/api', rateLimitMiddleware)
 
 app.use('/api/trust', trustRouter)
 
-app.get(
-  '/api/bond/:address',
-  validate({ params: bondPathParamsSchema }),
-  (req, res) => {
-    const { address } = req.validated!.params! as { address: string }
-    res.json({
-      address,
-      bondedAmount: '0',
-      bondStart: null,
-      bondDuration: null,
-      active: false,
-    })
-  },
-)
+const bondService = new BondService(new BondStore())
+app.use('/api/bond', createBondRouter(bondService))
 
 app.get(
   '/api/attestations/:address',

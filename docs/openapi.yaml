@@ -116,7 +116,7 @@ components:
     BondStatus:
       type: object
       required:
-        [address, bondedAmount, bondStart, bondDuration, active, slashedAmount]
+        [address, bondedAmount, bondStart, bondDuration, active, status, slashedAmount]
       properties:
         address:
           type: string
@@ -141,6 +141,10 @@ components:
           type: boolean
           description: Whether the bond is currently active.
           example: true
+        status:
+          type: string
+          description: Canonical derived bond status.
+          example: "active"
         slashedAmount:
           type: string
           description: Total amount slashed from this bond in wei.
@@ -270,6 +274,7 @@ paths:
                     bondStart: "2024-01-15T00:00:00.000Z"
                     bondDuration: 31536000
                     active: true
+                    status: "active"
                     slashedAmount: "0"
                 inactive:
                   summary: Inactive bond
@@ -279,6 +284,7 @@ paths:
                     bondStart: null
                     bondDuration: null
                     active: false
+                    status: "inactive"
                     slashedAmount: "0"
         "400":
           description: Address format is invalid.

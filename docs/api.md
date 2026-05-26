@@ -212,6 +212,7 @@ GET /api/bond/:address
   "bondStart": "2024-01-15T00:00:00.000Z",
   "bondDuration": 31536000,
   "active": true,
+  "status": "active",
   "slashedAmount": "0"
 }
 ```
@@ -225,6 +226,7 @@ GET /api/bond/:address
   "bondStart": null,
   "bondDuration": null,
   "active": false,
+  "status": "inactive",
   "slashedAmount": "0"
 }
 ```
@@ -254,6 +256,7 @@ GET /api/bond/:address
 | `bondStart`     | string \| null      | ISO 8601 bond start timestamp        |
 | `bondDuration`  | integer \| null     | Bond duration in seconds             |
 | `active`        | boolean             | Whether the bond is currently active |
+| `status`        | string              | Canonical derived bond status        |
 | `slashedAmount` | string (bigint wei) | Total amount slashed from this bond  |
 
 **cURL examples**
