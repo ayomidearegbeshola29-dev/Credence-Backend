@@ -142,6 +142,16 @@ export const idempotencyDuplicatesDetected = new client.Counter({
 })
 
 // ============================================================================
+// Settlement Metrics
+// ============================================================================
+
+export const settlementDuplicatesDetected = new client.Counter({
+  name: 'settlement_duplicates_detected_total',
+  help: 'Total number of settlement duplicates detected and collapsed via transaction_hash idempotency',
+  registers: [register]
+})
+
+// ============================================================================
 // Middleware
 // ============================================================================
 
@@ -287,4 +297,21 @@ export function recordIdentitySync(
  */
 export function recordStaleCacheRead(namespace: string) {
   staleCacheReadsTotal.inc({ namespace })
+}
+
+/**
+ * Record settlement duplicate detection via transaction_hash idempotency
+ * 
+ * Usage:
+ * ```typescript
+ * import { recordSettlementDuplicate } from './middleware/metrics.js'
+ * 
+ * const result = await settlementService.upsertSettlementStatus(input)
+ * if (result.isDuplicate) {
+ *   recordSettlementDuplicate()
+ * }
+ * ```
+ */
+export function recordSettlementDuplicate() {
+  settlementDuplicatesDetected.inc()
 }

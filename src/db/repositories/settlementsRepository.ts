@@ -63,7 +63,7 @@ export class SettlementsRepository {
       `
       INSERT INTO settlements (bond_id, amount, transaction_hash, settled_at, status)
       VALUES ($1, $2, $3, $4, $5)
-      ON CONFLICT (bond_id, transaction_hash)
+      ON CONFLICT (transaction_hash)
       DO UPDATE SET
         amount     = EXCLUDED.amount,
         status     = EXCLUDED.status,

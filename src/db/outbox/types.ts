@@ -17,7 +17,7 @@ export interface OutboxEvent {
   errorMessage: string | null
 }
 
-export type OutboxEventStatus = 'pending' | 'processing' | 'published' | 'failed'
+export type OutboxEventStatus = 'pending' | 'processing' | 'published' | 'failed' | 'dead_letter'
 
 /**
  * Input for creating a new outbox event.

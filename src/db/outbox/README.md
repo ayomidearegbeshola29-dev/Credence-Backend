@@ -59,9 +59,10 @@ Stores domain events with metadata:
 - `aggregate_id`: Aggregate instance identifier
 - `event_type`: Event type (e.g., "bond.created")
 - `payload`: Event data as JSONB
-- `status`: Processing status (pending, processing, published, failed)
+- `status`: Processing status (pending, processing, published, failed, dead_letter)
 - `retry_count`: Number of publish attempts
 - `max_retries`: Maximum retry attempts before marking as failed
+ - `next_attempt_at`: When the event becomes eligible for the next retry (used for backoff)
 - `created_at`: Event creation timestamp
 - `processed_at`: When event was published or failed
 - `error_message`: Last error message if failed
@@ -86,6 +87,7 @@ Background worker that polls for pending events and publishes them:
 - Processes events in batches (default: 100)
 - Maintains ordering per aggregate
 - Retries failed publishes with configurable max retries
+ - Retries failed publishes with configurable max retries and exponential backoff
 - Cleans up old events periodically
 
 ### 4. OutboxEventEmitter
@@ -192,6 +194,23 @@ Old events are automatically cleaned up based on retention policy:
 
 - **Published events**: Deleted after 7 days (configurable)
 - **Failed events**: Deleted after 30 days (configurable)
+ - **Dead-letter**: Events moved to `dead_letter` after exceeding `max_retries` are preserved until cleanup and can be inspected or reprocessed manually.
+
+Backoff and dead-letter
+
+- When a publish attempt fails, the repository increments `retry_count` and sets `next_attempt_at` to implement exponential backoff. The formula is:
+
+  next_attempt_at = NOW() + 2^(retry_count + 1) seconds
+
+  (e.g., first retry waits 2s, next 4s, then 8s, etc.)
+
+- When `retry_count + 1 >= max_retries`, the event transitions to `dead_letter` (terminal state) and `processed_at` is set.
+
+- Claiming (`claimEvents`) will only select events whose `next_attempt_at` is NULL or <= NOW(), ensuring not-yet-due events are skipped. Ordering per-aggregate is preserved among due events.
+
+Metrics
+
+- When an event reaches `dead_letter`, the publisher emits a Prometheus counter `outbox_dead_letter_total{error_code}` if `prom-client` is available.
 
 This prevents unbounded table growth while maintaining audit trail for recent events.
 

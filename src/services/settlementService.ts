@@ -1,6 +1,7 @@
 import { SettlementsRepository, Settlement, CreateSettlementInput } from '../db/repositories/settlementsRepository.js'
 import { cache } from '../cache/redis.js'
 import { invalidateCache } from '../cache/invalidation.js'
+import { recordSettlementDuplicate } from '../middleware/metrics.js'
 
 export class SettlementService {
   constructor(private readonly repository: SettlementsRepository) {}
@@ -33,10 +34,16 @@ export class SettlementService {
 
   /**
    * Upserts the settlement (status mutation).
+   * Records duplicate detection metric when settlement is idempotent on transaction_hash.
    * Cache invalidation hook is executed post-commit (after DB update).
    */
   async upsertSettlementStatus(input: CreateSettlementInput): Promise<Settlement> {
-    const { settlement } = await this.repository.upsert(input)
+    const { settlement, isDuplicate } = await this.repository.upsert(input)
+    
+    // Record metric when duplicate settlement is detected and collapsed via transaction_hash idempotency
+    if (isDuplicate) {
+      recordSettlementDuplicate()
+    }
     
     // Post-commit hook: invalidate the cache immediately after status mutation with verification
     await invalidateCache(
