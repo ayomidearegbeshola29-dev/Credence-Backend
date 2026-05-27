@@ -1,79 +1,90 @@
-import type { DistributedLock } from './distributedLock.js'
-import type { ReportRepository } from '../db/repositories/reportRepository.js'
-import type { ReportService } from '../services/reportService.js'
-import { ReportJobStatus } from '../jobs/types.js'
-
-export interface ReportWorkerOptions {
-  distributedLock: DistributedLock
-  lockKey?: string
-  logger?: (msg: string) => void
-}
+import { ReportJobStatus } from './types.js'
+import { ReportRepository } from '../db/repositories/reportRepository.js'
+import { ReportStorageService } from '../services/reportStorage.js'
+import { invalidateCache } from '../cache/invalidation.js'
+import { pool } from '../db/pool.js'
 
 /**
- * Durable report worker: claims queued report jobs and processes them
- * under a distributed lock so work is not duplicated across replicas.
+ * Report worker that generates report artifacts as a streaming AsyncIterable
+ * and persists them via ReportStorageService.
+ *
+ * Mirrors ExportWorker streaming patterns to avoid buffering large reports
+ * in memory.
  */
 export class ReportWorker {
-  private readonly lockKey: string
-  private readonly logger: (msg: string) => void
-
   constructor(
-    private readonly repo: ReportRepository,
-    private readonly service: ReportService,
-    private readonly opts: ReportWorkerOptions,
-  ) {
-    this.lockKey = opts.lockKey ?? 'report:worker'
-    this.logger = opts.logger ?? (() => {})
+    private readonly reportRepository: ReportRepository,
+    private readonly storage: ReportStorageService
+  ) {}
+
+  /**
+   * Process a report job from QUEUED → RUNNING → COMPLETED (or FAILED).
+   * Generates the artifact as an async stream, uploads it, and persists
+   * the storage key.
+   */
+  async processReport(jobId: string, type: string, tenantId: string = 'default'): Promise<void> {
+    const storageKey = this.storage.makeKey(tenantId, jobId)
+
+    try {
+      await this.updateStatusAndInvalidate(jobId, ReportJobStatus.RUNNING)
+
+      const reportStream = this.generateReportStream(jobId, type)
+      await this.storage.uploadStream(storageKey, reportStream)
+
+      await this.updateStatusAndInvalidate(jobId, ReportJobStatus.COMPLETED, {
+        storageKey,
+      })
+    } catch (error) {
+      console.error(`Error processing report job ${jobId}:`, error)
+      await this.updateStatusAndInvalidate(jobId, ReportJobStatus.FAILED, {
+        failureReason: 'INTERNAL_ERROR',
+      })
+    }
   }
 
   /**
-   * Attempt to claim and process a single queued report job.
-   * Returns the worker result or null if no work claimed or lock not acquired.
+   * Generate report content as a streaming AsyncIterable.
+   * Each chunk is a Buffer produced on demand to avoid buffering the full
+   * report in memory.
    */
-  async run(): Promise<null | { id: string; status: string }> {
-    const { distributedLock } = this.opts
+  private async *generateReportStream(jobId: string, type: string): AsyncIterable<Buffer> {
+    yield Buffer.from(`Report ID: ${jobId}\nType: ${type}\nGenerated: ${new Date().toISOString()}\n`, 'utf-8')
 
-    const { executed, result } = await distributedLock.withLock(
-      this.lockKey,
-      async () => {
-        this.logger(`[ReportWorker] scanning for queued jobs`)
+    await new Promise((resolve) => setTimeout(resolve, 500))
 
-        const claimed = await this.repo.claimNextQueued()
-        if (!claimed) {
-          this.logger('[ReportWorker] no queued jobs')
-          return null
-        }
+    yield Buffer.from('--- Page 2 ---\nSummary data placeholder\n', 'utf-8')
 
-        this.logger(`[ReportWorker] claimed job ${claimed.id}, processing`)
+    await new Promise((resolve) => setTimeout(resolve, 500))
 
-        try {
-          // TODO: Replace stubbed artifact generation with real report builder.
-          const artifactUrl = `https://artifacts.credence.example.com/reports/${claimed.id}.pdf`
+    yield Buffer.from('--- End of Report ---\n', 'utf-8')
+  }
 
-          await this.service.updateStatusWithInvalidation(
-            claimed.id,
-            ReportJobStatus.COMPLETED,
-            { artifactUrl }
-          )
+  /**
+   * Update status and invalidate the cache so the status endpoint reflects
+   * the change immediately.
+   */
+  private async updateStatusAndInvalidate(
+    id: string,
+    status: ReportJobStatus,
+    metadata?: { failureReason?: string; storageKey?: string }
+  ): Promise<void> {
+    await this.reportRepository.updateStatus(id, status, metadata)
 
-          this.logger(`[ReportWorker] completed job ${claimed.id}`)
-          return { id: claimed.id, status: 'completed' }
-        } catch (err) {
-          this.logger(`[ReportWorker] job ${claimed.id} failed: ${String(err)}`)
-          await this.service.updateStatusWithInvalidation(
-            claimed.id,
-            ReportJobStatus.FAILED,
-            { failureReason: 'INTERNAL_ERROR' }
-          )
-          return null
-        }
-      },
-      { ttlMs: 60_000 }
-    )
-
-    if (!executed) return null
-    return result ?? null
+    const job = await this.reportRepository.findById(id)
+    if (job) {
+      await invalidateCache('report', id, job, {
+        verify: true,
+        verifyFn: (cached, fresh) => cached.status !== fresh.status,
+      })
+    }
   }
 }
 
-export default ReportWorker
+/**
+ * Factory: creates a ReportWorker wired to the default pool and storage.
+ */
+export function createReportWorker(storage?: ReportStorageService): ReportWorker {
+  const repo = new ReportRepository(pool)
+  const svc = storage ?? new ReportStorageService()
+  return new ReportWorker(repo, svc)
+}

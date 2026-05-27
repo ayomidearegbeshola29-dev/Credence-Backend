@@ -19,7 +19,8 @@
     "migrate:lint": "tsx src/migrations/linter.ts check",
     "migrate:preflight": "tsx src/migrations/linter.ts pre-flight",
     "migrate:template": "tsx src/migrations/linter.ts template",
-    "migrate:safety": "tsx src/migrations/linter.ts check --strict"
+    "migrate:safety": "tsx src/migrations/linter.ts check --strict",
+    "generate:openapi": "npx tsx scripts/generate-openapi.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",
@@ -48,6 +49,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@asteasolutions/zod-to-openapi": "^8.5.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/compression": "^1.8.1",
     "@types/express": "^4.17.21",
@@ -69,6 +71,7 @@
     "ts-jest": "^29.4.6",
     "tsx": "^4.7.0",
     "typescript": "~5.2.2",
-    "vitest": "^4.1.2"
+    "vitest": "^4.1.2",
+    "yaml": "^2.9.0"
   }
 }

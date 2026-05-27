@@ -66,8 +66,8 @@ export class OutboxRepository {
              lease_expires_at = NOW() + ($3 || ' seconds')::interval
          WHERE id IN (
            SELECT id FROM event_outbox
-           WHERE status = 'pending'
-              OR (status = 'processing' AND (lease_expires_at IS NULL OR lease_expires_at < NOW()))
+           WHERE (status = 'pending' OR (status = 'processing' AND (lease_expires_at IS NULL OR lease_expires_at < NOW())))
+             AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
            ORDER BY created_at ASC
            LIMIT $1
            FOR UPDATE SKIP LOCKED
@@ -116,8 +116,8 @@ export class OutboxRepository {
              lease_expires_at = NOW() + ($3 || ' seconds')::interval
          WHERE id IN (
            SELECT id FROM event_outbox
-           WHERE status = 'pending'
-              OR (status = 'processing' AND (lease_expires_at IS NULL OR lease_expires_at < NOW()))
+           WHERE (status = 'pending' OR (status = 'processing' AND (lease_expires_at IS NULL OR lease_expires_at < NOW())))
+             AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
            ORDER BY created_at ASC
            LIMIT $1
          )
@@ -341,24 +341,40 @@ export class OutboxRepository {
    * Mark an event as failed and increment retry count.
    * If max retries exceeded, status remains 'failed'.
    */
-  async markFailed(db: Queryable, eventId: bigint, errorMessage: string): Promise<void> {
-    await db.query(
+  async markFailed(db: Queryable, eventId: bigint, errorMessage: string): Promise<{ status: string; retryCount: number }> {
+    // Step 1: increment retry_count, set status and clear lease/consumer, clear next_attempt_at for now
+    const upd = await db.query<{
+      retry_count: number
+      max_retries: number
+    }>(
       `UPDATE event_outbox
-       SET status = CASE 
-         WHEN retry_count + 1 >= max_retries THEN 'failed'
-         ELSE 'pending'
-       END,
+       SET status = CASE WHEN retry_count + 1 >= max_retries THEN 'dead_letter' ELSE 'pending' END,
            retry_count = retry_count + 1,
            error_message = $2,
-           processed_at = CASE 
-         WHEN retry_count + 1 >= max_retries THEN NOW()
-         ELSE NULL
-       END,
+           processed_at = CASE WHEN retry_count + 1 >= max_retries THEN NOW() ELSE NULL END,
            consumer_id = NULL,
-           lease_expires_at = NULL
-       WHERE id = $1`,
+           lease_expires_at = NULL,
+           next_attempt_at = NULL
+       WHERE id = $1
+       RETURNING retry_count, max_retries`,
       [eventId.toString(), errorMessage]
     )
+
+    const row = upd.rows[0]
+    const retryCount = row ? Number(row.retry_count) : 0
+    const maxRetries = row ? Number(row.max_retries) : 0
+
+    // If not yet exhausted, compute exponential backoff in JS and update next_attempt_at
+    if (retryCount < maxRetries) {
+      const delaySeconds = Math.pow(2, retryCount)
+      await db.query(
+        `UPDATE event_outbox SET next_attempt_at = NOW() + ($2 || ' seconds')::interval WHERE id = $1`,
+        [eventId.toString(), String(Math.floor(delaySeconds))]
+      )
+    }
+
+    const status = retryCount >= maxRetries ? 'dead_letter' : 'pending'
+    return { status, retryCount }
   }
 
   /**

@@ -2,6 +2,10 @@ import { pool } from '../pool.js'
 import { OutboxRepository } from './repository.js'
 import type { OutboxEvent, OutboxCleanupConfig } from './types.js'
 import { randomUUID } from 'crypto'
+import {
+  recordOutboxPublisherHeartbeat,
+  setOutboxPublisherRunning,
+} from '../../services/health/runtimeState.js'
 
 /**
  * Event handler that processes published domain events.
@@ -73,6 +77,8 @@ export class OutboxPublisher {
     }
 
     this.running = true
+    setOutboxPublisherRunning(true)
+    recordOutboxPublisherHeartbeat()
     console.log('[OutboxPublisher] Starting with config:', {
       ...this.config,
       consumerId: this.consumerId,
@@ -113,6 +119,7 @@ export class OutboxPublisher {
     }
 
     this.running = false
+    setOutboxPublisherRunning(false)
 
     if (this.pollTimer) {
       clearInterval(this.pollTimer)
@@ -143,6 +150,7 @@ export class OutboxPublisher {
       return
     }
     const renewed = await this.repository.renewLease(pool, this.consumerId, this.leaseSeconds)
+    recordOutboxPublisherHeartbeat()
     if (renewed > 0) {
       console.debug(`[OutboxPublisher] Renewed lease for ${renewed} events`)
     }
@@ -164,6 +172,7 @@ export class OutboxPublisher {
     )
 
     if (events.length === 0) {
+      recordOutboxPublisherHeartbeat()
       return
     }
 
@@ -216,7 +225,20 @@ export class OutboxPublisher {
         `[OutboxPublisher] Failed to publish event ${event.id} (${event.eventType}):`,
         errorMessage
       )
-      await this.repository.markFailed(pool, event.id, errorMessage)
+      try {
+        const result = await this.repository.markFailed(pool, event.id, errorMessage)
+        if (result?.status === 'dead_letter') {
+          // Normalize a short error code for metrics
+          const code = (errorMessage.split(/\s+/)[0] || 'UNKNOWN')
+            .toUpperCase()
+            .replace(/[^A-Z0-9_]/g, '_')
+            .slice(0, 50)
+          incrementOutboxDeadLetter(code)
+          console.warn(`[OutboxPublisher] Event ${event.id} moved to dead-letter`)
+        }
+      } catch (err) {
+        console.error('[OutboxPublisher] Error marking event failed:', err)
+      }
     }
   }
 
